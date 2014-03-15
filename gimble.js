@@ -113,9 +113,12 @@ function SmallTorchTile (x, y) {
 	this.__proto__ = new TorchTile(x, y, 32);
 }
 
-function FuelPackTile (x, y) {
+function FuelCellTile (x, y) {
 	this.__proto__ = new Tile(x, y);
 	this.type = 'fuel pack';
+	this.collectable = function (gimble) {
+		gimble.spendFuel(-64);
+	}
 	this.draw = function (ctx) {
 		ctx.save();
 
@@ -208,6 +211,13 @@ function Room (w, h, numRooms) {
 
 	this.tileAt = function (x, y) {
 		return this.tiles[Math.floor(x / SQUARE) + ',' + Math.floor(y / SQUARE)] || [];
+	}
+
+	this.removeAt = function (x, y, tile) {
+		var ts = this.tileAt(x, y);
+		var i = ts.indexOf(tile);
+		if (i < 0) return;
+		ts.splice(i, 1);
 	}
 
 	this.darkAt = function (x, y) {
@@ -334,8 +344,8 @@ function Room (w, h, numRooms) {
 			var j = k.split(',')[1];
 			if (this.is(i, j, function (x) { return x.type == 'wall'; })
 					&& !this.is(i, j-1, function (x) { return x.solid; })
-					&& j > this.max_j && Math.random() < 0.02)
-				this.addTile(FuelTile, i, j-1);
+					&& j > this.max_j && Math.random() < 0.04)
+				this.addTile(Math.random() < 0.3? FuelTile: FuelCellTile, i, j-1);
 		}
 	}
 
@@ -355,6 +365,8 @@ function Room (w, h, numRooms) {
 		for (var i = 0; i < this.width * (this.height - this.max_j) / 512; i++) {
 			var x = Math.random() * this.width;
 			var y = this.max_j + (Math.random() * (this.height - this.max_j));
+			x *= SQUARE;
+			y *= SQUARE;
 			fs.push(new Firefly(x, y, y));
 		}
 		this.flies = this.flies.concat(fs);
@@ -366,7 +378,6 @@ function Room (w, h, numRooms) {
 	this.addTorches();
 	this.addFuel();
 	this.addFlyHives();
-	this.addFireflies();
 
 	this.tick = function (gimble) {
 		for (var i = 0; i < this.tickers.length; i++) {
@@ -524,6 +535,7 @@ function Firefly (x, y, height) {
 	this.vx = 0;
 	this.vy = 0;
 	this.height = height;
+	this.max_speed = 2;
 	this.on = true;
 	Object.defineProperty(this, 'emits', {
 		get: function () { return 15 * this.on; }
@@ -531,22 +543,28 @@ function Firefly (x, y, height) {
 
 	this.tick = function (room, gimble) {
 		this.vy += grav;
+		console.log(this.emits);
+
+		this.height = gimble.y;
 
 		/*
-		var mag = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-		if (mag > this.max_speed) {
-			this.vx = this.vx * this.max_speed / mag;
-			this.vy = this.vy * this.max_speed / mag;
-		}
 		*/
 
 		if (this.y > this.height) {
 			this.vy -= 1.5*grav;
 		}
 
-		this.vx += Math.random() - 0.5;
+		if (this.vx > gimble.vx) {
+			this.vx++;
+		} else this.vx--;
 
-		if (Math.random() < 0.1)
+		var mag = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+		if (mag > this.max_speed) {
+			this.vx = this.vx * this.max_speed / mag;
+			this.vy = this.vy * this.max_speed / mag;
+		}
+
+		if (Math.random() < 0.01)
 			this.on = !this.on;
 	}
 
@@ -564,6 +582,7 @@ function Firefly (x, y, height) {
 	}
 
 	this.drawDark = function (ctx) {
+		console.log('hello');
 		if (!this.on) return;
 
 		console.log('hello');
@@ -824,6 +843,16 @@ function Gimble (x, y) {
 		get: function () { return this.keys[16]; }
 	});
 
+	this.spendFuel = function (f) {
+		this.fuel -= f;
+		if (this.fuel > this.max_fuel) this.fuel = this.max_fuel;
+		else if (this.fuel < 0) {
+			this.fuel = 0;
+			return false;
+		}
+		return true;
+	}
+
 	this.tick = function (room) {
 		this.fuel -= this.leak;
 		if (this.fuel < 0) this.fuel = 0;
@@ -908,8 +937,9 @@ function Gimble (x, y) {
 
 			if (collision.fuel) this.fuel += collision.fuel;
 
-			if (collision.type == 'fly hive') {
-				collision.kill = true;
+			if (collision.collectable) {
+				collision.collectable(this);
+				room.removeAt(collision.x, collision.y, collision);
 			}
 		}
 	}
