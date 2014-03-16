@@ -165,9 +165,11 @@ function FlyHiveTile (x, y) {
 function BarrierDoorTile (x, y, barrier) {
 	this.__proto__ = new Tile(x, y);
 	this.barrier = barrier;
+	this.color = '#111';
 	this.draw = function (ctx) {
 		ctx.save();
 
+		this.fillStyle = this.color;
 		ctx.translate(this.x + SQUARE / 2, this.y + SQUARE / 2);
 		ctx.beginPath();
 		ctx.moveTo(-SQUARE/2, SQUARE/2);
@@ -176,7 +178,7 @@ function BarrierDoorTile (x, y, barrier) {
 		ctx.lineTo(SQUARE/2, SQUARE/2);
 		ctx.fill();
 
-		if (this.barriered) {
+		if (this.barrier) {
 			this.barrier.draw(ctx, true);
 		}
 
@@ -216,6 +218,25 @@ function BarrierTile (x, y, color) {
 
 	this.collectable = function (gimble) {
 		gimble.inventory[this.color] = true;
+	}
+}
+
+function ExitTile (x, y) {
+	this.__proto__ = new BarrierDoorTile(x, y);
+	this.color = 'white';
+	this.emits = 256;
+
+	this.drawDark = function (ctx) {
+		ctx.save();
+		var grd = ctx.createRadialGradient(this.x, this.y, 0,
+				this.x, this.y, this.emits);
+		grd.addColorStop(0, 'rgba(255, 255, 127, 1)');
+		grd.addColorStop(1, 'rgba(255, 255, 127, 0)');
+		ctx.fillStyle = grd;
+		ctx.beginPath();
+		ctx.arc(this.x, this.y, this.emits, 0, 2 * Math.PI,false);
+		ctx.fill();
+		ctx.restore();
 	}
 }
 
@@ -452,6 +473,11 @@ function Room (i, w, h, numRooms) {
 		return barrier;
 	}
 
+	this.addExit = function () {
+		var t = this.niceRandom();
+		this.addTile(ExitTile, t.i, t.j-1);
+	}
+
 	this.addFireflies = function () {
 		var fs = [];
 		for (var i = 0; i < this.width * (this.height - this.max_j) / 512; i++) {
@@ -595,6 +621,7 @@ function Complex (n) {
 				this.rooms[v[0]].addDoor(v[1], this);
 			}
 		}
+		this.rooms[this.targetNode].addExit();
 		console.log('graph applied.');
 	}
 
@@ -1046,8 +1073,8 @@ function Gimble (x, y) {
 
 	this.tick = function (complex) {
 		if (complex.room.darkAt(this.x, this.y)) {
-			if (!this.shift || this.fuel <= 0) this.afraid(1);
-		} else this.afraid(-1);
+			if (!this.shift || this.fuel <= 0) this.afraid(0.2);
+		} else this.afraid(-0.2);
 		this.spendFuel(this.leak);
 
 		this.oldLocs.push({
@@ -1143,6 +1170,7 @@ function Gimble (x, y) {
 
 	this.damage = function (n) {
 		this.spendFuel(n);
+		this.oldLocs[this.oldLocs.length-1].size = 0;
 	}
 
 	this.drawDark = function (ctx) {
