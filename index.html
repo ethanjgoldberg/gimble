@@ -6,6 +6,7 @@
 var roomChange;
 
 function go() {
+	paused = false;
 	s = 24;
 	var maxLengths = 2;
 	var numRooms = 4;
@@ -19,7 +20,7 @@ function go() {
 	var max_cam_y = HEIGHT;
 	var min_cam_y = 0;
 
-	var complex = new Complex(8);
+	var complex = new Complex(6);
 	var gimble = new Gimble (2 * SQUARE, HEIGHT*2 - 2 * SQUARE);
 	min_cam_y = complex.room.max_j * SQUARE;
 	max_cam_x = complex.width * SQUARE - WIDTH + SQUARE;
@@ -27,9 +28,10 @@ function go() {
 
 	(function tick() {
 	 window.requestAnimationFrame(tick);
+	 if (paused) return;
 
 	 gimble.tick(complex);
-	 complex.room.tick(gimble);
+	 complex.tick(gimble);
 
 	 ctx.save();
 	 ctx.clearRect(0, 0, WIDTH, HEIGHT);
