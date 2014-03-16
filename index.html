@@ -6,7 +6,7 @@
 var roomChange;
 
 function go() {
-	var s = 24;
+	s = 24;
 	var maxLengths = 2;
 	var numRooms = 4;
 
@@ -19,21 +19,17 @@ function go() {
 	var max_cam_y = HEIGHT;
 	var min_cam_y = 0;
 
-	var room = 0;
-	var rooms = [];
-	for (var i = 0; i < numRooms; i++) {
-		rooms.push(new Room(s * Math.floor(Math.random() * maxLengths)+s, s, numRooms));
-	}
+	var complex = new Complex(8);
 	var gimble = new Gimble (2 * SQUARE, HEIGHT*2 - 2 * SQUARE);
-	min_cam_y = rooms[room].max_j * SQUARE;
-	max_cam_x = rooms[room].width * SQUARE - WIDTH + SQUARE;
+	min_cam_y = complex.room.max_j * SQUARE;
+	max_cam_x = complex.width * SQUARE - WIDTH + SQUARE;
 	var cam = {x: 0, y: 0};
 
 	(function tick() {
 	 window.requestAnimationFrame(tick);
 
-	 gimble.tick(rooms[room]);
-	 rooms[room].tick(gimble);
+	 gimble.tick(complex);
+	 complex.room.tick(gimble);
 
 	 ctx.save();
 	 ctx.clearRect(0, 0, WIDTH, HEIGHT);
@@ -47,10 +43,10 @@ function go() {
 
 	 ctx.translate(-cam.x, -cam.y);
 	 ctx.globalCompositeOperation = 'source-over';
-	 rooms[room].drawDark(ctx, cam);
+	 complex.room.drawDark(ctx, cam);
 	 gimble.drawDark(ctx);
 	 ctx.globalCompositeOperation = 'source-atop';
-	 rooms[room].draw(ctx, cam);
+	 complex.room.draw(ctx, cam);
 	 ctx.globalCompositeOperation = 'source-over';
 	 gimble.draw(ctx);
 	 ctx.globalCompositeOperation = 'destination-over';

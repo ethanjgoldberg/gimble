@@ -13,7 +13,7 @@ function Tile (x, y, color) {
 		ctx.save();
 
 		ctx.fillStyle = this.color;
-		ctx.fillRect(x, y, SQUARE + .6, SQUARE);
+		ctx.fillRect(this.x, this.y, SQUARE + .6, SQUARE);
 
 		ctx.restore();
 	}
@@ -23,6 +23,7 @@ function WallTile (x, y) {
 	this.__proto__ = new Tile(x, y);
 	this.type = 'wall';
 	this.solid = true;
+	this.niceTop = true;
 }
 function UnderWallTile (x, y) {
 	this.__proto__ = new Tile(x, y, 'grey');
@@ -157,8 +158,9 @@ function FlyHiveTile (x, y) {
 	}
 }
 
-function DoorTile (x, y) {
+function BarrierDoorTile (x, y, barrier) {
 	this.__proto__ = new Tile(x, y);
+	this.barrier = barrier;
 	this.draw = function (ctx) {
 		ctx.save();
 
@@ -170,27 +172,78 @@ function DoorTile (x, y) {
 		ctx.lineTo(SQUARE/2, SQUARE/2);
 		ctx.fill();
 
+		if (this.barriered) {
+			this.barrier.draw(ctx, true);
+		}
+
 		ctx.restore();
 	}
 
-	this.link = 0;
+	this.enter = function (complex, gimble) {
+		if (!this.barriered) {
+			complex.changeRoom(this.link, gimble);
+			return;
+		}
+		if (gimble.inventory[this.barrier.color] == true) {
+			this.barriered = false;
+		}
+	}
+
+	this.link = {
+		id: 0,
+		x: 2 * SQUARE,
+		y: HEIGHT * 2 - 2 * SQUARE
+	}
 }
 
-function Room (w, h, numRooms) {
+function BarrierTile (x, y, color) {
+	this.__proto__ = new Tile(x, y);
+	this.color = color;
+
+	this.draw = function (ctx, d) {
+		ctx.save();
+
+		if (!d) ctx.translate(this.x + SQUARE/2, this.y + SQUARE/2);
+		ctx.fillColor = this.color;
+		ctx.fillRect(-SQUARE/8, -SQUARE/8, SQUARE/4, SQUARE/4);
+
+		ctx.restore();
+	}
+
+	this.collectable = function (gimble) {
+		gimble.inventory[this.color] = true;
+	}
+}
+
+function Room (i, w, h, numRooms) {
+	this.id = i;
 	this.width = w;
 	this.height = h;
 	this.tiles = {};
 	this.lights = [];
 	this.tickers = [];
 	this.flies = [];
+	this.niceTops = [];
+
+	this.x = 2 * SQUARE;
+	this.y = HEIGHT * 2 - 2 * SQUARE;
 
 	this.addTile = function (Type, i, j) {
+		var t = new Type(i * SQUARE, j * SQUARE);
+		this.add(t, i, j);
+	}
+
+	this.add = function (t, i, j) {
 		var coords = i + ',' + j;
 		if (!this.tiles.hasOwnProperty(coords))
 			this.tiles[coords] = [];
-		var t = new Type(i*SQUARE, j*SQUARE);
+		t.x = i * SQUARE;
+		t.y = j * SQUARE;
+		t.i = i;
+		t.j = j;
 		if (t.tick) this.tickers.push(t);
 		if (t.emits != undefined) this.lights.push(t);
+		if (t.niceTop && j > this.max_j) this.niceTops.push(t);
 		this.tiles[coords].push(t);
 	}
 
@@ -239,6 +292,15 @@ function Room (w, h, numRooms) {
 
 	this.wallp = Math.random();
 	this.bridgep = Math.random();
+
+	this.niceRandom = function () {
+		while (true) {
+			var t = choice(this.niceTops);
+			if (!this.is(t.i, t.j-1, function () { return true; })) {
+				return t;
+			}
+		}
+	}
 
 	this.addWalls = function () {
 		for (var j = this.max_j; j < this.height; j++) {
@@ -351,13 +413,39 @@ function Room (w, h, numRooms) {
 
 	this.addFlyHives = function () {
 		for (var k = 0; k < this.width * (this.height - this.max_j) / 1024; k++) {
-			var i = Math.floor(Math.random() * this.width);
-			this.addTile(FlyHiveTile, i, this.height - (Math.floor(Math.random() * (this.max_j-1) / 3)*3) - 2);
+			var t = choice(this.niceTops);
+			this.addTile(FlyHiveTile, t.i, t.j - 1);
 		}
 	}
 
-	this.addDoors = function () {
+	this.addDoor = function (link_id, complex, barrier) {
+		var t = this.niceRandom();
 
+		var p = complex.rooms[link_id].niceRandom();
+
+		var ti = new BarrierDoorTile(barrier);
+		ti.link.id = link_id;
+		this.add(ti, t.i, t.j-1);
+
+		var pi = new BarrierDoorTile(barrier);
+		pi.link.id = this.id;
+		complex.rooms[link_id].add(pi, p.i, p.j-1);
+
+		ti.link.x = pi.x + SQUARE/2;
+		ti.link.y = pi.y + SQUARE/2;
+		pi.link.x = ti.x + SQUARE/2;
+		pi.link.y = ti.y + SQUARE/2;
+
+		return ti.barrier;
+	}
+
+	this.addBarrier = function () {
+		var t = this.niceRandom();
+
+		var barrier = choice([new BarrierTile(0, 0, 'red'), new BarrierTile(0, 0, 'blue'), new BarrierTile(0, 0, 'green')]);
+
+		this.add(barrier, t.i, t.j-1);
+		return barrier;
 	}
 
 	this.addFireflies = function () {
@@ -383,7 +471,6 @@ function Room (w, h, numRooms) {
 		for (var i = 0; i < this.tickers.length; i++) {
 			var ts = this.tickers[i].tick();
 			if (ts) {
-				console.log(ts);
 				this.flies = this.flies.concat(ts);
 			}
 		}
@@ -439,6 +526,94 @@ function Room (w, h, numRooms) {
 
 	this.drawBackground = function (ctx) {
 	};
+}
+
+function randInt (a, b) {
+	return Math.floor(Math.random() * (b - a)) + a;
+}
+function choice (list) {
+	return list[Math.floor(Math.random() * list.length)];
+}
+
+function Complex (n) {
+	this.rooms = [];
+	this.maxLengths = 4;
+	this.numberOfNodes = n;
+	this.targetNode = this.numberOfNodes - 1;
+	this.roomIndex = 0;
+
+	this.generateRooms = function () {
+		for (var i = 0; i < this.numberOfNodes; i++) {
+			var w = s * randInt(1, this.maxLengths);
+			this.rooms.push(new Room(i, w, s, this.numberOfNodes));
+		}
+	}
+
+	this.generateGraph = function () {
+		var nodes = [];
+		// haha javascript
+		for (var i = 2; i < this.numberOfNodes; i++) nodes.push(i);
+		var reachable = [0, 1];
+		this.graph = [[0, 1, false]];
+		while (reachable.indexOf(this.targetNode) < 0) {
+			var q = randInt(0, this.numberOfNodes);
+			if (q) {
+				n = choice(nodes);
+			} else n = choice(reachable);
+			p = randInt(0, 1);
+			a = choice(reachable);
+			if (a == n) continue;
+			if (p) {
+				this.graph.push([a, n, false]);
+			} else this.graph.push([a, n, choice(reachable)]);
+			if (q) {
+				reachable.push(n);
+				nodes.splice(nodes.indexOf(n), 1);
+			}
+		}
+		var uniqs = {};
+		for (var i = 0; i < this.graph.length; i++) {
+			uniqs[JSON.stringify(this.graph[i])] = true;
+		}
+		this.graph = [];
+		for (var k in uniqs) {
+			this.graph.push(JSON.parse(k));
+		}
+		console.log('graph generated.');
+	}
+
+	this.applyGraph = function () {
+		for (var i = 0; i < this.graph.length; i++) {
+			var v = this.graph[i];
+			console.log('applying', v);
+			if (v[2]) {
+				var barrier = this.rooms[v[2]].addBarrier();
+				this.rooms[v[0]].addDoor(v[1], this, barrier);
+			} else {
+				this.rooms[v[0]].addDoor(v[1], this);
+			}
+		}
+		console.log('graph applied.');
+	}
+
+	this.generate = function () {
+		this.generateRooms();
+		this.generateGraph();
+		this.applyGraph();
+	}
+	this.generate();
+
+	Object.defineProperty(this, 'room', {
+		get: function () {
+			return this.rooms[this.roomIndex];
+		}
+	});
+
+	this.changeRoom = function (link, gimble) {
+		if (link.id == this.roomIndex) return;
+		this.roomIndex = link.id;
+		gimble.moveTo(link.x, link.y);
+	}
 }
 
 function Fly (x, y) {
@@ -543,7 +718,6 @@ function Firefly (x, y, height) {
 
 	this.tick = function (room, gimble) {
 		this.vy += grav;
-		console.log(this.emits);
 
 		this.height = gimble.y;
 
@@ -582,10 +756,8 @@ function Firefly (x, y, height) {
 	}
 
 	this.drawDark = function (ctx) {
-		console.log('hello');
 		if (!this.on) return;
 
-		console.log('hello');
 
 		ctx.save();
 
@@ -828,8 +1000,12 @@ function Gimble (x, y) {
 	});
 
 	Object.defineProperty(this, 'jump', {
-		get: function () { return this.keys[38] || this.keys[32]; }
+		get: function () { return this.keys[32]; }
 	});
+	Object.defineProperty(this, 'up', {
+		get: function () { return this.keys[38] || this.keys[67]; }
+	});
+	this.pressedUp = false;
 	Object.defineProperty(this, 'down', {
 		get: function () { return this.keys[40] || this.keys[87]; }
 	});
@@ -853,7 +1029,9 @@ function Gimble (x, y) {
 		return true;
 	}
 
-	this.tick = function (room) {
+	this.inventory = {};
+
+	this.tick = function (complex) {
 		this.fuel -= this.leak;
 		if (this.fuel < 0) this.fuel = 0;
 		if (this.fuel > this.max_fuel) this.fuel = this.max_fuel;
@@ -886,16 +1064,16 @@ function Gimble (x, y) {
 
 		this.x += this.vx;
 		if (this.vx > 0) {
-			var collisions = room.tileAt(this.x + this.width, this.y)
-				.concat(room.tileAt(this.x + this.width, this.y + this.height - 1));
+			var collisions = complex.room.tileAt(this.x + this.width, this.y)
+				.concat(complex.room.tileAt(this.x + this.width, this.y + this.height - 1));
 			for (var i = 0; i < collisions.length; i++) {
 				if (!collisions[i].solid) continue;
 				this.x = collisions[i].x - this.width - 1;
 				this.vx = 0;
 			}
 		} else if (this.vx < 0) {
-			var collisions = room.tileAt(this.x, this.y)
-				.concat(room.tileAt(this.x, this.y + this.height - 1));
+			var collisions = complex.room.tileAt(this.x, this.y)
+				.concat(complex.room.tileAt(this.x, this.y + this.height - 1));
 			for (var i = 0; i < collisions.length; i++) {
 				if (!collisions[i].solid) continue;
 				this.x = collisions[i].x + SQUARE;
@@ -905,8 +1083,8 @@ function Gimble (x, y) {
 
 		this.y += this.vy;
 		this.grounded = false;
-		var collisions = room.collide(this.x, this.y, this.width, this.height);
-		var lastCollisions = room.collide(this.x, this.y - this.vy,
+		var collisions = complex.room.collide(this.x, this.y, this.width, this.height);
+		var lastCollisions = complex.room.collide(this.x, this.y - this.vy,
 				this.width, this.height);
 
 		for (var i = 0; i < collisions.length; i++) {
@@ -939,9 +1117,15 @@ function Gimble (x, y) {
 
 			if (collision.collectable) {
 				collision.collectable(this);
-				room.removeAt(collision.x, collision.y, collision);
+				complex.room.removeAt(collision.x, collision.y, collision);
+			}
+
+			if (collision.enter && this.up && !this.lastUp) {
+				collision.enter(complex, this);
 			}
 		}
+
+		this.lastUp = this.up;
 	}
 
 	this.damage = function (n) {
@@ -995,6 +1179,13 @@ function Gimble (x, y) {
 		ctx.strokeRect(72, 24, 128, 24);
 		
 		ctx.restore();
+	}
+
+	this.moveTo = function (x, y) {
+		this.vx = 0;
+		this.vy = 0;
+		this.x = x;
+		this.y = y;
 	}
 
 	this.keys = {};
