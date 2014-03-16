@@ -25,6 +25,10 @@ function WallTile (x, y) {
 	this.solid = true;
 	this.niceTop = true;
 }
+function BadWallTile (x, y) {
+	this.__proto__ = new WallTile(x, y);
+	this.niceTop = false;
+}
 function UnderWallTile (x, y) {
 	this.__proto__ = new Tile(x, y, 'grey');
 	this.type = 'underWall';
@@ -204,7 +208,7 @@ function BarrierTile (x, y, color) {
 		ctx.save();
 
 		if (!d) ctx.translate(this.x + SQUARE/2, this.y + SQUARE/2);
-		ctx.fillColor = this.color;
+		ctx.fillStyle = this.color;
 		ctx.fillRect(-SQUARE/8, -SQUARE/8, SQUARE/4, SQUARE/4);
 
 		ctx.restore();
@@ -304,12 +308,12 @@ function Room (i, w, h, numRooms) {
 
 	this.addWalls = function () {
 		for (var j = this.max_j; j < this.height; j++) {
-			this.addTile(WallTile, 0, j);
-			this.addTile(WallTile, this.width, j);
+			this.addTile(BadWallTile, 0, j);
+			this.addTile(BadWallTile, this.width, j);
 		}
 		for (var i = 0; i < this.width; i++) {
 			this.addTile(WallTile, i, this.height-1);
-			this.addTile(WallTile, i, this.max_j);
+			this.addTile(BadWallTile, i, this.max_j);
 		}
 	}
 
@@ -475,13 +479,11 @@ function Room (i, w, h, numRooms) {
 			}
 		}
 
-		var rx = Math.random() * this.width;
-		var ry = this.max_j + Math.random() * (this.height - this.max_j);
-		if (!this.isAt(rx, ry, function (t) { return t.solid; }) &&
-				this.darkAt(rx, ry) && Math.random() < 0.001) {
-					console.log('roach!');
-					this.flies.push(new Roach(rx, ry));
-				}
+		var t = this.niceRandom();
+		if (this.darkAt(t.x, t.y) && Math.random() < 0.001) {
+			console.log('roach!');
+			this.flies.push(new Roach(t.x, t.y - SQUARE));
+		}
 
 		for (var i = 0; i < this.flies.length; i++)
 			this.flies[i].tick(this, gimble);
@@ -541,7 +543,7 @@ function Complex (n) {
 	this.numberOfNodes = n;
 	this.targetNode = this.numberOfNodes - 1;
 	this.roomIndex = 0;
-
+	
 	this.generateRooms = function () {
 		for (var i = 0; i < this.numberOfNodes; i++) {
 			var w = s * randInt(1, this.maxLengths);
@@ -832,8 +834,9 @@ function Roach (x, y) {
 			}
 			this.vx += sign(gimble.x - this.x) * this.speed;
 
-			if (d < this.radius * this.radius * 2) {
-				gimble.leak += 0.001;
+			if (d < this.radius * this.radius * 8) {
+				console.log('roach hit!');
+				gimble.leak += 0.004;
 				gimble.flicker = true;
 			}
 		} else {
@@ -972,6 +975,8 @@ function Gimble (x, y) {
 	this.vx = 0;
 	this.vy = 0;
 
+	this.fear = 0;
+	this.max_fear = 512;
 	this.fuel = 512;
 	this.max_fuel = 512;
 	this.leak = 0;
@@ -1023,18 +1028,27 @@ function Gimble (x, y) {
 		this.fuel -= f;
 		if (this.fuel > this.max_fuel) this.fuel = this.max_fuel;
 		else if (this.fuel < 0) {
+			this.afraid(-this.fuel);
 			this.fuel = 0;
 			return false;
 		}
 		return true;
 	}
 
+	this.afraid = function (n) {
+		this.fear += n;
+		if (this.fear > this.max_fear) this.die();
+		if (this.fear < 0) this.fear = 0;
+	}
+
 	this.inventory = {};
+	this.fuelPacks = 0;
 
 	this.tick = function (complex) {
-		this.fuel -= this.leak;
-		if (this.fuel < 0) this.fuel = 0;
-		if (this.fuel > this.max_fuel) this.fuel = this.max_fuel;
+		if (complex.room.darkAt(this.x, this.y)) {
+			if (!this.shift || this.fuel <= 0) this.afraid(1);
+		} else this.afraid(-1);
+		this.spendFuel(this.leak);
 
 		this.oldLocs.push({
 			x: this.x + this.width/2 + this.cast_x, 
@@ -1051,9 +1065,8 @@ function Gimble (x, y) {
 		else if (this.grounded) this.vx = 0;
 		if (this.jump && this.grounded) this.vy += this.jumpv;
 		else if (!this.jump && !this.grounded && this.vy < 0) this.vy /= 2;
-		if (this.shift && this.fuel > 0) {
+		if (this.shift && this.spendFuel(1)) {
 			this.size += 0.02 * Math.log(2 * HEIGHT - this.y);
-			this.fuel--;
 		} else this.size -= 0.1;
 		if (this.size > 1) this.size *= .99;
 		else this.size = 1;
@@ -1129,7 +1142,7 @@ function Gimble (x, y) {
 	}
 
 	this.damage = function (n) {
-		this.fuel -= n;
+		this.spendFuel(n);
 	}
 
 	this.drawDark = function (ctx) {
@@ -1177,7 +1190,19 @@ function Gimble (x, y) {
 		ctx.fillText('fuel:', 12, 42);
 		ctx.fillRect(72, 24, this.fuel / this.max_fuel * 128, 24);
 		ctx.strokeRect(72, 24, 128, 24);
+
+		ctx.fillStyle = 'red';
+		ctx.strokeStyle = 'red';
+		ctx.fillText('fear:', 12, 72);
+		ctx.fillRect(72, 54, this.fear / this.max_fear * 128, 24);
+		ctx.strokeRect(72, 54, 128, 24);
 		
+		var count = 0;
+		for (var k in this.inventory) {
+			ctx.fillStyle = k;
+			ctx.fillRect(72 + 16 * count, 84, 8, 8);
+			count++;
+		}
 		ctx.restore();
 	}
 
@@ -1186,6 +1211,7 @@ function Gimble (x, y) {
 		this.vy = 0;
 		this.x = x;
 		this.y = y;
+		this.oldLocs = [];
 	}
 
 	this.keys = {};

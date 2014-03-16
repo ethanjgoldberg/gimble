@@ -35,10 +35,12 @@ function go() {
 	 ctx.clearRect(0, 0, WIDTH, HEIGHT);
 	 cam.x = gimble.x - WIDTH / 2;
 	 cam.y = gimble.y - HEIGHT / 2;
+	 /*
 	 if (cam.x > max_cam_x) cam.x = max_cam_x;
 	 if (cam.y > max_cam_y) cam.y = max_cam_y;
 	 if (cam.x < min_cam_x) cam.x = min_cam_x;
 	 if (cam.y < min_cam_y) cam.y = min_cam_y;
+	 */
 	 //crawlie.tick(gimble);
 
 	 ctx.translate(-cam.x, -cam.y);
