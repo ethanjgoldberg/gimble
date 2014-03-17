@@ -4,6 +4,11 @@ var grav = 0.2;
 function dist2(x1, y1, x2, y2) {
 	return (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
 }
+Array.prototype.remove = function (x) {
+	var i = this.indexOf(x);
+	if (i < 0) return;
+	this.splice(i, 1);
+}
 
 function Tile (x, y, color) {
 	this.x = x;
@@ -53,6 +58,7 @@ function TorchTile (x, y, lighter) {
 	this.emits = 0;
 	this.lighter = lighter || 512;
 	this.size = this.lighter / 512;
+	this.everLit = false;
 
 	this.gradient = function (ctx) {
 		var grd=ctx.createRadialGradient(this.x + SQUARE/2, this.y + SQUARE/2, 0,
@@ -68,7 +74,6 @@ function TorchTile (x, y, lighter) {
 		ctx.save();
 		var x = this.x + SQUARE / 2;
 		var y = this.y + SQUARE / 2;
-		this.emits -= .05;
 		if (this.emits < 0) this.emits = 0;
 
 		ctx.fillStyle = this.gradient(ctx);
@@ -91,7 +96,7 @@ function TorchTile (x, y, lighter) {
 
 		function r() { return Math.random() * 2 - 1; }
 
-		if (this.emits) {
+		if (this.emits > 0)  {
 			for (var i = 0; i < 2; i++) {
 				ctx.fillStyle = ['red', 'orange'][i];
 				ctx.beginPath();
@@ -106,12 +111,19 @@ function TorchTile (x, y, lighter) {
 		ctx.restore();
 	}
 
+	this.tick = function (dt) {
+		var m = dt / 16.67;
+		this.emits -= 0.05 * m;
+		if (this.emits < 0) this.emits = 0;
+	}
+
 	this.damage = function (n) {
 		this.emits-=n;
 	}
 
 	this.light = function () {
 		this.emits = this.lighter;
+		this.everLit = true;
 	}
 }
 function SmallTorchTile (x, y) {
@@ -122,7 +134,8 @@ function FuelCellTile (x, y) {
 	this.__proto__ = new Tile(x, y);
 	this.type = 'fuel pack';
 	this.collectable = function (gimble) {
-		gimble.spendFuel(-64);
+		gimble.spendFuel(-128);
+		return "+fuel";
 	}
 	this.draw = function (ctx) {
 		ctx.save();
@@ -133,6 +146,40 @@ function FuelCellTile (x, y) {
 
 		ctx.restore();
 	}
+}
+function EverLightTile (x, y) {
+	this.__proto__ = new TorchTile(x, y);
+	this.type = 'ever light';
+	this.emits = 512;
+	this.gradient = function (ctx) {
+		var grd=ctx.createRadialGradient(this.x + SQUARE/2, this.y + SQUARE/2, 0,
+				this.x + SQUARE/2 + Math.random() * SQUARE/2 - SQUARE/4,
+				this.y + SQUARE/2 + Math.random() * SQUARE/2 - SQUARE/4,
+				this.emits);
+		var op = 1/3;
+		grd.addColorStop(0, 'rgba(0, 255, 0, ' + op + ')');
+		grd.addColorStop(1, 'rgba(0, 255, 0, 0)');
+		return grd;
+	}
+
+	this.draw = function (ctx) {
+		ctx.save();
+
+		ctx.fillStyle = '#0f0';
+		var unit = SQUARE / 8;
+		ctx.translate(this.x + SQUARE/2, this.y + SQUARE/2);
+		ctx.beginPath();
+		ctx.moveTo(-unit, 0);
+		ctx.lineTo(0, -unit);
+		ctx.lineTo(unit, 0);
+		ctx.lineTo(0, unit);
+		ctx.fill();
+		
+		ctx.restore();
+	}
+
+	this.tick = function () {};
+	this.damage = function () {};
 }
 function WallJumpTile (x, y) {
 	this.__proto__ = new Tile(x, y);
@@ -186,26 +233,89 @@ function FuelTile (x, y) {
 	this.fuel = 1;
 }
 
+function FuelCanisterTile (x, y) {
+	this.__proto__ = new Tile(x, y);
+	this.type = 'fuel canister';
+	this.collectable = function (gimble) {
+		gimble.max_fuel += 64;
+		return '+max fuel';
+	}
+	this.draw = function (ctx) {
+		ctx.save();
+
+		ctx.fillStyle = 'blue';
+		ctx.translate(this.x + SQUARE/2, this.y + SQUARE/2);
+		var unit = SQUARE/4;
+		ctx.beginPath();
+		ctx.moveTo(-unit, unit);
+		ctx.lineTo(-unit, 0);
+		ctx.arc(0, 0, unit, Math.PI, 0, false);
+		ctx.lineTo(unit, unit);
+		ctx.lineTo(-unit, unit);
+		ctx.fill();
+
+		ctx.restore();
+	}
+}
+
+function CandyTile (x, y) {
+	this.__proto__ = new Tile(x, y);
+	this.type = 'candy';
+	this.collectable = function (gimble) {
+		gimble.fear = 0;
+		gimble.points += 20;
+		return 'yum +20';
+	}
+	this.draw = function (ctx) {
+		ctx.save();
+
+		ctx.fillStyle = 'white';
+		ctx.translate(this.x + SQUARE/2, this.y + SQUARE/2);
+		ctx.beginPath();
+		ctx.arc(0, 0, SQUARE/8, 0, Math.PI * 2, false);
+		ctx.fill();
+		ctx.strokeStyle = 'red';
+		ctx.lineWidth = 4;
+		ctx.beginPath();
+		ctx.moveTo(-SQUARE/16, -SQUARE/16);
+		ctx.lineTo(SQUARE/16, SQUARE/16);
+		ctx.stroke();
+
+		ctx.restore();
+	}
+}
+
 function FlyHiveTile (x, y) {
 	this.__proto__ = new Tile(x, y, '#330');
 	this.type = 'fly hive';
 	this.solid = false;
 	
-	this.tick = function () {
-		if (Math.random() < 0.001) {
+	this.tick = function (dt) {
+		var m = dt / 16.67;
+		if (Math.random() < 0.001 * m) {
 			return new Fly (this.x + SQUARE/2, this.y + SQUARE/2);
 		}
+	}
+
+	this.draw = function (ctx) {
+		ctx.save();
+
+		ctx.fillStyle = '#330';
+		ctx.translate(this.x + SQUARE/2, this.y + SQUARE/2);
+		ctx.beginPath();
+		ctx.lineTo(SQUARE/2, SQUARE/2);
+		ctx.lineTo(-SQUARE/2, SQUARE/2);
+		ctx.fill();
+		ctx.restore();
 	}
 }
 
 function BarrierDoorTile (x, y, barrier) {
 	this.__proto__ = new Tile(x, y);
 	this.barrier = barrier;
-	this.bdraw = barrier? barrier.draw.bind(this): false;
 	this.draw = function (ctx) {
 		ctx.save();
 
-		this.fillStyle = this.color;
 		ctx.translate(this.x + SQUARE / 2, this.y + SQUARE / 2);
 		ctx.beginPath();
 		ctx.moveTo(-SQUARE/2, SQUARE/2);
@@ -215,8 +325,11 @@ function BarrierDoorTile (x, y, barrier) {
 		ctx.fill();
 
 		if (this.barrier) {
-			ctx.fillStyle = this.barrier.color;
-			ctx.fillRect(-SQUARE/8, -SQUARE/8, SQUARE/4, SQUARE/4);
+			ctx.lineWidth = 2;
+			ctx.strokeStyle = this.barrier.color;
+			ctx.beginPath();
+			ctx.arc(0, 0, SQUARE/8, 0, Math.PI * 2, false);
+			ctx.stroke();
 		}
 
 		ctx.restore();
@@ -227,9 +340,14 @@ function BarrierDoorTile (x, y, barrier) {
 			complex.changeRoom(this.link, gimble);
 			return;
 		}
-		if (gimble.inventory[this.barrier.color] == true) {
+		if (gimble.doorKeys.indexOf(this.barrier.color) >= 0) {
+			gimble.doorKeys.remove(this.barrier.color);
 			this.barrier = false;
-			gimble.inventory[this.barrier.color] = false;
+			complex.rooms[this.link.id].isAt(this.link.x, this.link.y, function (t) {
+				if (t.barrier) {
+					t.barrier = false;
+				}
+			});
 		}
 	}
 
@@ -249,13 +367,18 @@ function BarrierTile (x, y, color) {
 
 		ctx.translate(this.x + SQUARE/2, this.y + SQUARE/2);
 		ctx.fillStyle = color;
-		ctx.fillRect(-SQUARE/8, -SQUARE/8, SQUARE/4, SQUARE/4);
+		ctx.beginPath();
+		ctx.arc(0, 0, SQUARE/8, 0, Math.PI*2, false);
+		ctx.fill();
 
 		ctx.restore();
 	}
+	this.collected = false;
 
 	this.collectable = function (gimble) {
-		gimble.inventory[this.color] = true;
+		if (this.collected) return;
+		this.collected = true;
+		gimble.doorKeys.push(this.color);
 	}
 }
 
@@ -263,6 +386,27 @@ function ExitTile (x, y) {
 	this.__proto__ = new BarrierDoorTile(x, y);
 	this.color = 'white';
 	this.emits = 256;
+
+	this.draw = function (ctx) {
+		ctx.save();
+
+		ctx.shadowBlur = 16;
+		ctx.fillStyle = 'white';
+		ctx.translate(this.x + SQUARE / 2, this.y + SQUARE / 2);
+		ctx.beginPath();
+		ctx.moveTo(-SQUARE/2, SQUARE/2);
+		ctx.lineTo(-SQUARE/2, 0);
+		ctx.arc(0, 0, SQUARE/2, Math.PI, 0, false);
+		ctx.lineTo(SQUARE/2, SQUARE/2);
+		ctx.fill();
+
+		if (this.barrier) {
+			ctx.fillStyle = this.barrier.color;
+			ctx.fillRect(-SQUARE/8, -SQUARE/8, SQUARE/4, SQUARE/4);
+		}
+
+		ctx.restore();
+	}
 
 	this.drawDark = function (ctx) {
 		ctx.save();
@@ -312,8 +456,14 @@ function Room (i, w, h, numRooms) {
 		t.j = j;
 		if (t.tick) this.tickers.push(t);
 		if (t.emits != undefined) this.lights.push(t);
-		if (t.niceTop) this.niceTops.push(t);
+		if (t.niceTop) {
+			this.niceTops.push(t);
+		}
 		this.tiles[coords].push(t);
+	}
+
+	this.addAt = function (t, x, y) {
+		this.add(t, Math.floor(x / SQUARE), Math.floor(y / SQUARE));
 	}
 
 	this.isK = function (k, callback) {
@@ -337,9 +487,7 @@ function Room (i, w, h, numRooms) {
 
 	this.removeAt = function (x, y, tile) {
 		var ts = this.tileAt(x, y);
-		var i = ts.indexOf(tile);
-		if (i < 0) return;
-		ts.splice(i, 1);
+		ts.remove(tile);
 	}
 
 	this.darkAt = function (x, y) {
@@ -384,7 +532,6 @@ function Room (i, w, h, numRooms) {
 
 	this.addRow = function (j, reachable) {
 		this.max_j = j;
-		console.log('adding row');
 		var row = reachable.slice(0);
 		// walls = 1
 		for (var i = 0; i < reachable.length; i++) {
@@ -418,11 +565,6 @@ function Room (i, w, h, numRooms) {
 		for (var i = 0; i < row.length; i++) {
 			if (row[i] == 1) {
 				this.addTile(WallTile, i, j);
-				for (var n = 0; !this.is(i, j+n, function (t) {
-					return t.solid;
-				}); n++) {
-					this.addTile(UnderWallTile, i, j+n);
-				}
 			}
 			if (row[i] == 2) {
 				this.addTile(BridgeTile, i, j);
@@ -447,9 +589,11 @@ function Room (i, w, h, numRooms) {
 				}
 			}
 		}
-		this.niceTops = this.niceTops.filter(function (x) {
-			return x.j-1 < this.max_j;
-		});
+		for (var i = 0; i < this.niceTops.length; i++) {
+			while (this.niceTops[i] && this.niceTops[i].j-1 < this.max_j) {
+				this.niceTops.splice(i, 1);
+			}
+		}
 
 		return j;
 	}
@@ -485,6 +629,20 @@ function Room (i, w, h, numRooms) {
 		}
 	}
 
+	this.addFuelCanisters = function () {
+		for (var i = 0; i < this.width * (this.height - this.max_j) / 2048; i++) {
+			var t = this.niceRandom();
+			this.addTile(FuelCanisterTile, t.i, t.j - 1);
+		}
+	}
+
+	this.addCandies = function () {
+		for (var i = 0; i < this.width * (this.height - this.max_j) / 1024; i++) {
+			var t = this.niceRandom();
+			this.addTile(CandyTile, t.i, t.j - 1);
+		}
+	}
+
 	this.addFlyHives = function () {
 		for (var k = 0; k < this.width * (this.height - this.max_j) / 1024; k++) {
 			var t = choice(this.niceTops);
@@ -497,11 +655,11 @@ function Room (i, w, h, numRooms) {
 
 		var p = complex.rooms[link_id].niceRandom();
 
-		var ti = new BarrierDoorTile(barrier);
+		var ti = new BarrierDoorTile(0, 0, barrier);
 		ti.link.id = link_id;
 		this.add(ti, t.i, t.j-1);
 
-		var pi = new BarrierDoorTile(barrier);
+		var pi = new BarrierDoorTile(0, 0, barrier);
 		pi.link.id = this.id;
 		complex.rooms[link_id].add(pi, p.i, p.j-1);
 
@@ -516,7 +674,7 @@ function Room (i, w, h, numRooms) {
 	this.addBarrier = function () {
 		var t = this.niceRandom();
 
-		var barrier = choice([new BarrierTile(0, 0, 'red'), new BarrierTile(0, 0, 'blue'), new BarrierTile(0, 0, 'green')]);
+		var barrier = choice([new BarrierTile(0, 0, 'red'), new BarrierTile(0, 0, 'cyan'), new BarrierTile(0, 0, 'green')]);
 
 		this.add(barrier, t.i, t.j-1);
 		return barrier;
@@ -534,17 +692,20 @@ function Room (i, w, h, numRooms) {
 		this.addTile(ExitTile, t.i, t.j-1);
 	}
 
+	this.addEverLight = function () {
+		var t = this.niceRandom();
+		this.addTile(EverLightTile, t.i, t.j-1);
+	}
+
 	this.addFireflies = function () {
-		var fs = [];
 		for (var i = 0; i < this.width * (this.height - this.max_j) / 512; i++) {
-			var x = Math.random() * this.width;
-			var y = this.max_j + (Math.random() * (this.height - this.max_j));
-			x *= SQUARE;
-			y *= SQUARE;
-			fs.push(new Firefly(x, y, y));
+			var t = this.niceRandom();
+			var x = t.i * SQUARE + SQUARE/2;
+			var y = t.j * SQUARE + SQUARE/2 - SQUARE;
+			var f = new Firefly(x, y, y);
+			this.flies.push(f);
+			this.lights.push(f);
 		}
-		this.flies = this.flies.concat(fs);
-		this.lights = this.lights.concat(fs);
 	}
 
 	this.addRows();
@@ -552,10 +713,13 @@ function Room (i, w, h, numRooms) {
 	this.addTorches();
 	this.addFuel();
 	this.addFlyHives();
+	this.addFuelCanisters();
+	this.addCandies();
+	//this.addFireflies();
 
-	this.tick = function (gimble) {
+	this.tick = function (gimble, dt) {
 		for (var i = 0; i < this.tickers.length; i++) {
-			var ts = this.tickers[i].tick();
+			var ts = this.tickers[i].tick(dt);
 			if (ts) {
 				this.flies = this.flies.concat(ts);
 			}
@@ -568,13 +732,13 @@ function Room (i, w, h, numRooms) {
 		}
 
 		for (var i = 0; i < this.flies.length; i++)
-			this.flies[i].tick(this, gimble);
+			this.flies[i].tick(this, gimble, dt);
 	}
 
 	this.draw = function (ctx, cam) {
 		ctx.save();
 
-		this.drawBackground(ctx);
+		this.drawBackground(ctx, cam);
 		for (var x = cam.x; x < cam.x + WIDTH + SQUARE; x += SQUARE) {
 			for (var y = cam.y; y < cam.y + HEIGHT + SQUARE; y += SQUARE) {
 				var ts = this.tileAt(x, y);
@@ -608,7 +772,7 @@ function Room (i, w, h, numRooms) {
 		ctx.restore();
 	}
 
-	this.drawBackground = function (ctx) {
+	this.drawBackground = function (ctx, cam) {
 	};
 }
 
@@ -621,16 +785,16 @@ function choice (list) {
 
 function Complex (n) {
 	this.rooms = [];
-	this.maxLengths = 4;
+	this.maxLengths = 3;
 	this.numberOfNodes = n;
 	this.targetNode = this.numberOfNodes - 1;
 	this.roomIndex = 0;
 	
-	this.tick = function (gimble) {
-		this.room.tick(gimble);
+	this.tick = function (gimble, dt) {
+		this.room.tick(gimble, dt);
 		for (var i = 0; i < this.rooms.length; i++) {
 			if (i == this.roomIndex) continue;
-			this.rooms[i].tick(false);
+			this.rooms[i].tick(false, dt);
 		}
 	}
 
@@ -645,21 +809,21 @@ function Complex (n) {
 		var nodes = [];
 		// haha javascript
 		for (var i = 2; i < this.numberOfNodes-1; i++) nodes.push(i);
-		var reachable = [0, 1];
+		this.reachable = [0, 1];
 		this.graph = [[0, 1, -1]];
-		while (reachable.indexOf(this.targetNode) < 0) {
+		while (this.reachable.indexOf(this.targetNode) < 0) {
 			var q = randInt(0, this.numberOfNodes);
 			if (q) {
 				n = choice(nodes);
-			} else n = choice(reachable);
+			} else n = choice(this.reachable);
 			p = randInt(0, 2);
-			a = choice(reachable);
+			a = choice(this.reachable);
 			if (a == n) continue;
 			if (p) {
 				this.graph.push([a, n, -1]);
-			} else this.graph.push([a, n, choice(reachable)]);
+			} else this.graph.push([a, n, choice(this.reachable)]);
 			if (q) {
-				reachable.push(n);
+				this.reachable.push(n);
 				nodes.splice(nodes.indexOf(n), 1);
 			}
 			if (this.graph.length == 4) nodes.push(this.targetNode);
@@ -672,6 +836,7 @@ function Complex (n) {
 		for (var k in uniqs) {
 			this.graph.push(JSON.parse(k));
 		}
+		this.rooms[choice(this.reachable)].addEverLight();
 		console.log('graph generated.');
 	}
 
@@ -682,18 +847,142 @@ function Complex (n) {
 			if (v[2] != -1) {
 				var barrier = this.rooms[v[2]].addBarrier();
 				this.rooms[v[0]].addDoor(v[1], this, barrier);
+				this.graph[i][2] = barrier.color;
 			} else {
 				this.rooms[v[0]].addDoor(v[1], this);
+				this.graph[i][2] = 'black';
 			}
 		}
 		this.rooms[this.targetNode].addExit();
 		console.log('graph applied.');
 	}
 
+	/*
+	this.nodes = {};
+	this.makeMap = function () {
+		var nodes = [];
+		for (var i = 0; i < this.reachable.length; i++) {
+			nodes.push({
+				id: i,
+				x: Math.random(),
+				y: Math.random(),
+				vx: 0,
+				vy: 0,
+				fx: 0,
+				fy: 0,
+			});
+		}
+		var edges = this.graph;
+		
+		for (var i = 0; i < 1024; i++) {
+			for (var j = 0; j < nodes.length; j++) {
+				for (var k = j+1; k < nodes.length; k++) {
+					var d = dist2(nodes[j].x, nodes[j].y, nodes[k].x, nodes[k].y);
+					var rd = Math.sqrt(d);
+
+					var dx = nodes[j].x - nodes[k].x;
+					var dy = nodes[j].y - nodes[k].y;
+
+					dx /= rd * d;
+					dy /= rd * d;
+
+					nodes[j].fx += dx;
+					nodes[j].fy += dy;
+					nodes[k].fx -= dx;
+					nodes[k].fy -= dy;
+				}
+				this.nodes[nodes[j].id] = nodes[j];
+			}
+			for (var e = 0; e < edges.length; e++) {
+				var j = edges[e][0];
+				var k = edges[e][1];
+
+				var d = dist2(this.nodes[j].x, this.nodes[j].y, 
+						this.nodes[k].x, 
+						this.nodes[k].y);
+				if (d > 1) {
+					var rd = Math.sqrt(d);
+
+					var dx = nodes[j].x - nodes[k].x;
+					var dy = nodes[j].y - nodes[k].y;
+
+					dx /= rd * d;
+					dy /= rd * d;
+
+					nodes[j].fx -= dx;
+					nodes[j].fy -= dy;
+					nodes[k].fx += dx;
+					nodes[k].fy += dy;
+				}
+			}
+			for (var j = 0; j < nodes.length; j++) {
+				nodes[j].fx *= .001;
+				nodes[j].fy *= .001;
+				nodes[j].vx += nodes[j].fx;
+				nodes[j].vy += nodes[j].fy;
+				nodes[j].x += nodes[j].vx;
+				nodes[j].y += nodes[j].vy;
+			}
+		}
+		var mapMinX = null;
+		var mapMinY = null;
+		var mapMaxX = null;
+		var mapMaxY = null;
+		for (var i = 0; i < nodes.length; i++) {
+			var x = nodes[i].x;
+			var y = nodes[i].y;
+			this.nodes[nodes[i].id] = {
+				id: nodes[i].id,
+				x: x,
+				y: y,
+			}
+			if (x > mapMaxX) mapMaxX = x;
+			if (y > mapMaxY) mapMaxY = y;
+			if (x < mapMaxX) mapMinX = x;
+			if (y < mapMaxY) mapMinY = y;
+		}
+		this.mapX = mapMinX;
+		this.mapY = mapMinY;
+		this.mapScaleX = WIDTH / (mapMaxX - mapMinX);
+		this.mapScaleY = HEIGHT / (mapMaxY - mapMinY);
+	}
+
+	this.drawMap = function (ctx) {
+		if (!this.shouldIDrawTheMap) return;
+		ctx.save();
+
+		ctx.fillStyle = 'rgba(255,255,255,.2)';
+		ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+		console.log(this.mapX, this.mapY);
+		ctx.translate(-this.mapX, -this.mapY);
+		//ctx.scale(this.mapScaleX, this.mapScaleY);
+		ctx.fillStyle = 'black';
+		for (var j = 0; j < this.reachable.length; j++) {
+			var n = this.reachable[j];
+			ctx.beginPath();
+			ctx.arc(n.x, n.y, 16, 0, 2 * Math.PI, false);
+			ctx.fill();
+		}
+		ctx.lineWidth = 2;
+		for (var j = 0; j < this.graph.length; j++) {
+			var n0 = this.nodes[this.graph[j][0]];
+			var n1 = this.nodes[this.graph[j][1]];
+			ctx.beginPath();
+			ctx.moveTo(n0.x, n0.y);
+			ctx.lineTo(n1.x, n1.y);
+			ctx.stroke();
+		}
+
+		ctx.restore();
+	}
+	*/
+
 	this.generate = function () {
 		this.generateRooms();
 		this.generateGraph();
 		this.applyGraph();
+		//this.makeMap();
 	}
 	this.generate();
 
@@ -705,7 +994,10 @@ function Complex (n) {
 
 	this.win = function () {
 		console.log('good job!');
+		counter = 480;
 		paused = true;
+		win = true;
+		won = true;
 	}
 
 	this.changeRoom = function (link, gimble) {
@@ -719,6 +1011,37 @@ function Complex (n) {
 	}
 }
 
+function Message (x, y, content) {
+	this.x = x;
+	this.y = y;
+	this.vy = -0.5;
+	this.content = content;
+	this.opacity = 1;
+	this.dopacity = -.01;
+
+	this.done = false;
+
+	this.tick = function () {
+		if (this.done) return;
+		this.y += this.vy;
+		this.opacity += this.dopacity;
+		if (this.opacity < 0) this.done = true;
+	}
+
+	this.draw = function (ctx) {
+		if (this.done) return;
+		ctx.save();
+
+		ctx.shadowBlur = 4;
+		ctx.shadowColor = 'white';
+		ctx.fillStyle = 'rgba(255, 255, 255, '+this.opacity+')';
+		ctx.font = '12pt courier';
+		ctx.textAlign = 'center';
+		ctx.fillText(this.content, this.x, this.y);
+
+		ctx.restore();
+	}
+}
 function Fly (x, y) {
 	this.x = x;
 	this.y = y;
@@ -742,11 +1065,12 @@ function Fly (x, y) {
 		ctx.restore();
 	}
 
-	this.tick = function (room, gimble) {
+	this.tick = function (room, gimble, dt) {
+		var m = dt / 16.67;
 		if (this.dazed > 0) {
-			this.dazed--;
-			this.vx += Math.random() - 0.5;
-			this.vy += Math.random() - 0.5;
+			this.dazed -= m;
+			this.vx += (Math.random() - 0.5) * m;
+			this.vy += (Math.random() - 0.5) * m;
 		} else {
 			var lights = room.lights.slice(0);
 			if (gimble) lights.push(gimble);
@@ -792,14 +1116,14 @@ function Fly (x, y) {
 			this.vy = this.vy * this.max_speed / mag;
 		}
 
-		this.x += this.vx;
-		if (room.isAt(this.x, this.y, function (t) { return t.solid; })) {
+		this.x += this.vx * m;
+		if (room.isAt(this.x, this.y, function (t) { return t.type != 'fly hive' && t.solid; })) {
 			this.vx = -this.vx;
 			this.x += this.vx;
 			this.dazed = 8;
 		}
-		this.y += this.vy;
-		if (room.isAt(this.x, this.y, function (t) { return t.solid; })) {
+		this.y += this.vy * m;
+		if (room.isAt(this.x, this.y, function (t) { return t.type != 'fly hive' && t.solid; })) {
 			this.vy = -this.vy;
 			this.y += this.vy;
 			this.dazed = 8;
@@ -812,37 +1136,32 @@ function Firefly (x, y, height) {
 	this.y = y;
 	this.vx = 0;
 	this.vy = 0;
+	this.vvx = 0;
+	this.vvy = 0;
 	this.height = height;
 	this.max_speed = 2;
-	this.on = true;
+	this.speed = 0.05;
+	this.on = 1;
 	Object.defineProperty(this, 'emits', {
-		get: function () { return 15 * this.on; }
+		get: function () { return 64 * this.on; }
 	});
 
-	this.tick = function (room, gimble) {
-		this.vy += grav;
-
-		this.height = gimble.y;
-
+	this.tick = function (room, gimble, dt) {
 		/*
 		*/
 
-		if (this.y > this.height) {
-			this.vy -= 1.5*grav;
+		this.vx += (Math.random() - .5) * this.speed;
+		this.vy += (Math.random() - .5) * this.speed;
+		this.x += this.vx;
+		if (room.isAt(this.x, this.y, function (t) { return t.solid; })) {
+			this.vx = -this.vx;
+			this.x += this.vx;
 		}
-
-		if (this.vx > gimble.vx) {
-			this.vx++;
-		} else this.vx--;
-
-		var mag = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-		if (mag > this.max_speed) {
-			this.vx = this.vx * this.max_speed / mag;
-			this.vy = this.vy * this.max_speed / mag;
+		this.y += this.vy;
+		if (room.isAt(this.x, this.y, function (t) { return t.solid; })) {
+			this.vy = -this.vy;
+			this.y += this.vy;
 		}
-
-		if (Math.random() < 0.01)
-			this.on = !this.on;
 	}
 
 	this.draw = function (ctx) {
@@ -852,7 +1171,6 @@ function Firefly (x, y, height) {
 
 		ctx.beginPath();
 		ctx.arc(this.x, this.y, 2, 0, 2 * Math.PI, false);
-		ctx.arc(this.x, this.y, 20, 0, 2 * Math.PI, false);
 		ctx.fill();
 
 		ctx.restore();
@@ -860,18 +1178,17 @@ function Firefly (x, y, height) {
 
 	this.drawDark = function (ctx) {
 		if (!this.on) return;
-
-
 		ctx.save();
 
 		var grd = ctx.createRadialGradient(this.x, this.y, 0,
 				this.x, this.y, this.emits);
-		grd.addColorStop(0, 'rgba(255, 255, 127, '+1+')');
-		grd.addColorStop(1, 'rgba(255, 255, 127, 0)');
+		grd.addColorStop(0, 'rgba(255, 255, 255, '+.3+')');
+		grd.addColorStop(1, 'rgba(255, 255, 255, 0)');
 		//ctx.fillStyle = 'rgba(255, 255, 127, ' + (i / 120) + ')';
 		ctx.fillStyle = grd;
 		ctx.beginPath();
-		ctx.arc(this.x, this.y, this.emits, 0, 2 * Math.PI,false);
+		ctx.arc(this.x, this.y, this.emits * 64, 0, 2 * Math.PI,false);
+		ctx.fill();
 
 		ctx.restore();
 	}
@@ -919,12 +1236,13 @@ function Roach (x, y) {
 		this.lastCount = 1;
 	}
 
-	this.tick = function (room, gimble) {
+	this.tick = function (room, gimble, dt) {
+		var m = dt / 16.67;
 		if (this.jumps > 0 && this.grounded) {
 			this.jumps--;
 			this.vy += this.jump;
 		}
-		this.vy += grav;
+		this.vy += grav * m;
 
 		var d = 1000000;
 		if (gimble) d = dist2(this.x, this.y, gimble.x, gimble.y);
@@ -934,11 +1252,11 @@ function Roach (x, y) {
 				this.jumps = 3;
 				this.chasing = true;
 			}
-			this.vx += sign(gimble.x - this.x) * this.speed;
+			this.vx += sign(gimble.x - this.x) * this.speed * m;
 
 			if (d < this.radius * this.radius * 8) {
 				console.log('roach hit!');
-				gimble.leak += 0.004;
+				gimble.leak += 0.004 * m;
 				gimble.flicker = true;
 			}
 		} else {
@@ -986,7 +1304,7 @@ function Roach (x, y) {
 			this.vx *= .9;
 		}
 
-		this.x += this.vx;
+		this.x += this.vx * m;
 		if (this.vx > 0) {
 			var collision = room.isAt(this.x + this.radius, this.y, function (x) {
 				return x.solid;
@@ -1006,7 +1324,7 @@ function Roach (x, y) {
 		}
 
 		this.grounded = false;
-		this.y += this.vy;
+		this.y += this.vy * m;
 		if (this.vy > 0) {
 			var collision = room.isAt(this.x, this.y, function (x) {
 				return x.solid || (x.type == 'bridge' && x.y>this.y-this.vy);
@@ -1035,7 +1353,7 @@ function sign (x) {
 	return 0;
 }
 
-function Gimble (x, y) {
+function Gimble (x, y, fake) {
 	this.x = x;
 	this.y = y;
 	this.vx = 0;
@@ -1109,14 +1427,27 @@ function Gimble (x, y) {
 
 	this.abilities = {};
 	this.inventory = {};
+	this.doorKeys = [];
 	this.fuelPacks = 0;
 	this.sided = 0;
+	this.points = 0;
 
-	this.tick = function (complex) {
+	this.winTick = function () {
+		counter--;
+		this.y--;
+	}
+
+	this.dieTick = function () {
+		counter--;
+		this.y++;
+	}
+
+	this.tick = function (complex, dt) {
+		var m = dt / 16.67;
 		if (complex.room.darkAt(this.x, this.y)) {
-			if (!this.shift || this.fuel <= 0) this.afraid(0.4);
-		} else this.afraid(-0.4);
-		this.spendFuel(this.leak);
+			if (!this.shift || this.fuel <= 0) this.afraid(0.4 * m);
+		} else this.afraid(-0.4 * m);
+		this.spendFuel(this.leak * m);
 
 		this.oldLocs.push({
 			x: this.x + this.width/2 + this.cast_x, 
@@ -1126,13 +1457,14 @@ function Gimble (x, y) {
 		if (this.oldLocs.length > this.keep) {
 			this.oldLocs = this.oldLocs.slice(1);
 		}
-		if (!this.grounded) this.vy += grav;
+		if (!this.grounded) this.vy += grav * m;
 
-		if (this.left) this.vx -= this.run;
-		else if (this.right) this.vx += this.run;
+		if (this.left) this.vx -= this.run * m;
+		else if (this.right) this.vx += this.run * m;
 		else if (this.grounded) this.vx = 0;
 		if (this.jump) {
 			if (this.grounded) this.vy += this.jumpv;
+			/*
 			else if (this.abilities.doubleJump && !this.doubleJumped) {
 				this.vy = Math.min(this.vy, this.jumpv);
 				this.doubleJumped = true;
@@ -1141,12 +1473,13 @@ function Gimble (x, y) {
 				this.vy = Math.min(this.vy, this.jumpv);
 				this.vx = -this.sided * this.max_vx;
 			}
+			*/
 		}
 
 		else if (!this.jump && !this.grounded && this.vy < 0) this.vy /= 2;
-		if (this.shift && this.spendFuel(1)) {
-			this.size += 0.02 * Math.log(2 * HEIGHT - this.y);
-		} else this.size -= 0.1;
+		if (this.shift && this.spendFuel(m)) {
+			this.size += 0.02 * m * Math.log(2 * HEIGHT - this.y);
+		} else this.size -= 0.1 * m;
 		if (this.size > 1) this.size *= .99;
 		else this.size = 1;
 
@@ -1155,7 +1488,7 @@ function Gimble (x, y) {
 			this.vx = sign(this.vx) * max;
 
 		this.sided = 0;
-		this.x += this.vx;
+		this.x += this.vx * m;
 		if (this.vx > 0) {
 			var collisions = complex.room.tileAt(this.x + this.width, this.y)
 				.concat(complex.room.tileAt(this.x + this.width, this.y + this.height - 1));
@@ -1176,7 +1509,7 @@ function Gimble (x, y) {
 			}
 		}
 
-		this.y += this.vy;
+		this.y += this.vy * m;
 		this.grounded = false;
 		var collisions = complex.room.collide(this.x, this.y, this.width, this.height);
 		var lastCollisions = complex.room.collide(this.x, this.y - this.vy,
@@ -1191,7 +1524,7 @@ function Gimble (x, y) {
 						(collision.type == 'bridge' &&
 						 lastCollisions.indexOf(collision) < 0 &&
 						 !this.down)) {
-					this.y = collision.y - this.height - grav/2;
+					this.y = collision.y - this.height - 2 * grav;
 					this.vy = 0;
 					this.grounded = true;
 					this.doubleJumped = false;
@@ -1205,23 +1538,45 @@ function Gimble (x, y) {
 
 			if (collision.type == 'torch') {
 				if (this.fuel > 0) {
+					if (!collision.everLit) {
+						this.points++;
+						complex.room.flies.push(
+								new Message(collision.x + SQUARE/2, 
+									collision.y + SQUARE / 2,
+									'+1'));
+					}
 					collision.light();
 				}
 			}
 
-			if (collision.fuel) this.fuel += collision.fuel;
+			if (collision.fuel) this.fuel += collision.fuel * m;
 
 			if (collision.collectable) {
-				collision.collectable(this);
+				var m = collision.collectable(this);
+				if (m) complex.room.flies.push(new Message(collision.x + SQUARE/2,
+							collision.y + SQUARE/2,
+							m));
 				complex.room.removeAt(collision.x, collision.y, collision);
 			}
 
 			if (collision.enter && this.up && !this.lastUp) {
 				collision.enter(complex, this);
+				this.entered = true;
 			}
 		}
 
 		this.lastUp = this.up;
+		if (this.everLight) {
+			this.everLight.x = this.x - SQUARE/2;
+			this.everLight.y = this.y - SQUARE/2;
+			this.everLight.emits--;
+			if (this.everLight.emits <= 0) {
+				delete this.everLight;
+			} else if (this.up && !this.entered) {
+				complex.room.addAt(this.everLight, this.x, this.y);
+			}
+		}
+		this.entered = false;
 	}
 
 	this.damage = function (n) {
@@ -1238,12 +1593,8 @@ function Gimble (x, y) {
 		for (var i = 0; i < this.oldLocs.length; i++) {
 			var loc = this.oldLocs[i];
 			var r = i * loc.size * 30 / this.keep;
-			try {
 			var grd = ctx.createRadialGradient(loc.x, loc.y, 0,
 					loc.x, loc.y, r);
-			} catch (e) {
-				console.log(loc, r);
-			}
 			grd.addColorStop(0, 'rgba(255, 255, 127, '+(2/this.keep)+')');
 			grd.addColorStop(1, 'rgba(255, 255, 127, 0)');
 			//ctx.fillStyle = 'rgba(255, 255, 127, ' + (i / 120) + ')';
@@ -1252,6 +1603,7 @@ function Gimble (x, y) {
 			ctx.arc(this.oldLocs[i].x, this.oldLocs[i].y, r, 0, 2 * Math.PI,false);
 			ctx.fill();
 		}
+
 		ctx.restore();
 	}
 	this.draw = function (ctx) {
@@ -1278,25 +1630,52 @@ function Gimble (x, y) {
 		ctx.fillText('fuel:', 12, 42);
 		ctx.fillRect(72, 24, this.fuel / this.max_fuel * 128, 24);
 		ctx.strokeRect(72, 24, 128, 24);
+		ctx.textAlign = 'right';
+		ctx.fillText('points:' + this.points, WIDTH-42, 42);
 
+		ctx.textAlign = 'left';
 		ctx.fillStyle = 'red';
 		ctx.strokeStyle = 'red';
 		ctx.fillText('fear:', 12, 72);
 		ctx.fillRect(72, 54, this.fear / this.max_fear * 128, 24);
 		ctx.strokeRect(72, 54, 128, 24);
 		
-		var count = 0;
-		for (var k in this.inventory) {
-			ctx.fillStyle = k;
-			ctx.fillRect(72 + 16 * count, 84, 8, 8);
-			count++;
+		for (var i = 0; i < this.doorKeys.length; i++) {
+			ctx.fillStyle = this.doorKeys[i];
+			ctx.beginPath();
+			ctx.arc(72 + 16 * i + 4, 84 + 4, 4, 0, Math.PI * 2, false);
+			ctx.fill();
 		}
+		ctx.restore();
+	}
+
+	this.drawOver = function (ctx) {
+		ctx.save();
+
+		ctx.fillStyle = 'white';
+		ctx.font = '24pt courier';
+
+		ctx.textAlign = 'center';
+		ctx.fillText((win? 'You made it!': 'Game over.'), WIDTH/2, HEIGHT/2 - SQUARE);
+		ctx.font = '12pt courier';
+		ctx.fillText('You scored ' + this.points + ' points before you', WIDTH/2, HEIGHT/2 + SQUARE/2);
+		if (die) {
+			ctx.fillText('were driven mad by the swarm!', WIDTH/2, HEIGHT/2 + SQUARE)
+		} else {
+			ctx.fillText('escaped with your sanity!', WIDTH/2, HEIGHT/2 + SQUARE);
+		}
+
+		ctx.fillStyle = 'rgba(255,255,255,' + (1 - (counter / 480)) + ')';
+		ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
 		ctx.restore();
 	}
 
 	this.die = function () {
 		console.log('...aaaAAA!!!');
 		paused = true;
+		die = true;
+		counter = 480;
 	}
 
 	this.moveTo = function (x, y) {
@@ -1309,10 +1688,12 @@ function Gimble (x, y) {
 
 	this.keys = {};
 
-	addEventListener('keydown', function (e) {
-		this.keys[e.keyCode] = true;
-	}.bind(this));
-	addEventListener('keyup', function (e) {
-		this.keys[e.keyCode] = false;
-	}.bind(this));
+	if (!fake) {
+		addEventListener('keydown', function (e) {
+			this.keys[e.keyCode] = true;
+		}.bind(this));
+		addEventListener('keyup', function (e) {
+			this.keys[e.keyCode] = false;
+		}.bind(this));
+	}
 }

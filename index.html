@@ -1,15 +1,18 @@
 <html>
 <head>
-<title>gimbleLOCK</title>
+<title>Gimble</title>
 <script src=gimble.js></script>
 <script>
-var roomChange;
+var win = false;
+var die = false;
+var counter = 1;
 
 function go() {
+	counter = 1;
+	win = false;
+	die = false;
 	paused = false;
 	s = 24;
-	var maxLengths = 2;
-	var numRooms = 4;
 
 	var canvas = document.getElementById('c');
 	WIDTH = canvas.width = SQUARE * s / 2;
@@ -20,18 +23,25 @@ function go() {
 	var max_cam_y = HEIGHT;
 	var min_cam_y = 0;
 
-	var complex = new Complex(6);
+	complex = new Complex(difficulty);
 	var gimble = new Gimble (2 * SQUARE, HEIGHT*2 - 2 * SQUARE);
 	min_cam_y = complex.room.max_j * SQUARE;
 	max_cam_x = complex.width * SQUARE - WIDTH + SQUARE;
 	var cam = {x: 0, y: 0};
 
+	var time = new Date;
 	(function tick() {
-	 window.requestAnimationFrame(tick);
-	 if (paused) return;
-
-	 gimble.tick(complex);
-	 complex.tick(gimble);
+	 var dt = new Date - time;
+	 time = new Date;
+	 if (counter) window.requestAnimationFrame(tick);
+	 else stop();
+	 if (paused) {
+	 if (win) gimble.winTick();
+	 if (die) gimble.dieTick();
+	 } else {
+	 gimble.tick(complex, dt);
+	 complex.tick(gimble, dt);
+	 }
 
 	 ctx.save();
 	 ctx.clearRect(0, 0, WIDTH, HEIGHT);
@@ -59,14 +69,71 @@ function go() {
 
 	 ctx.restore();
 	 gimble.drawStats(ctx);
+	 //complex.drawMap(ctx);
+	 if (win || die) gimble.drawOver(ctx);
 
 	 })();
 }
+
+addEventListener('keydown', function (e) {
+		if (e.keyCode == 80) paused = !paused;
+});
+
+function start () {
+	document.getElementById('instructions').classList.add('hidden');
+	document.getElementById('canvas').classList.remove('hidden');
+	go();
+}
+
+function stop () {
+	document.getElementById('instructions').classList.remove('hidden');
+	document.getElementById('canvas').classList.add('hidden');
+	if (win) {
+		var s = document.getElementById('secret');
+		s.classList.remove('hidden');
+		document.getElementById('s').innerHTML += '+';
+	} else document.getElementById('secret').classList.add('hidden');
+}
+
+function startPlus () {
+	difficulty += 2;
+	start();
+}
+
+var difficulty = 6;
+
+function toggleMap () {
+	var m = document.getElementById('map');
+	m.classList.toggle('hidden');
+}
 </script>
+<style>
+.hidden {
+	display:none;
+}
+#map {
+	opacity: .5;
+}
+</style>
 </head>
-<body onLoad=go()>
+<body>
 <center>
-	<canvas id=c style="border:3px solid grey"></canvas>
+	<div id=instructions>
+	<h2> GIMBLE </h2>
+	<h3>When light is scarce, Gimble must escape with wits intact.</h3>
+	<p>Press the arrow keys to move, space to jump, and shift to use your special power.</p>
+	<p>Press up to use a door. Some doors are marked, and require a similar key.</p>
+	<p>Torches light your way. They require a little fuel.</p>
+	<p>Flies like light, but they put it out.</p>
+	<p>Roaches make you start leaking fuel. Look out!</p>
+	<p>There are large blue fueling stations and small blue fuel packs.</p>
+	<p>Gimble loves peppermint!</p>
+	<p id=secret class=hidden><a id=s href=javascript:startPlus()>new game</a></p>
+	<p><a href=javascript:start(false)>new game</a></p>
+	</div>
+	<div id=canvas class=hidden>
+		<canvas id=c style="border:3px solid grey"></canvas>
+	</div>
 </center>
 </body>
 </html>
